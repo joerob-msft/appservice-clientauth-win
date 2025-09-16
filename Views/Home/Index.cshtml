@@ -1,0 +1,204 @@
+@model CertificateInfoViewModel
+@{
+    ViewData["Title"] = "Client Certificate Information";
+}
+
+<div class="container">
+    <h1 class="display-4">Client Certificate Information</h1>
+    <p class="lead">This page displays information about the client certificate presented to the server.</p>
+    
+    @if (Model.HasCertificate)
+    {
+        <div class="alert alert-success" role="alert">
+            <i class="bi bi-check-circle-fill"></i> Client certificate detected!
+        </div>
+
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>Certificate Basic Information</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p><strong>Subject:</strong><br />
+                                <code>@Model.Subject</code></p>
+                                
+                                <p><strong>Issuer:</strong><br />
+                                <code>@Model.Issuer</code></p>
+                                
+                                <p><strong>Thumbprint:</strong><br />
+                                <code>@Model.Thumbprint</code></p>
+                                
+                                <p><strong>Serial Number:</strong><br />
+                                <code>@Model.SerialNumber</code></p>
+                            </div>
+                            <div class="col-md-6">
+                                <p><strong>Valid From:</strong><br />
+                                @Model.NotBefore.ToString("yyyy-MM-dd HH:mm:ss UTC")</p>
+                                
+                                <p><strong>Valid Until:</strong><br />
+                                @Model.NotAfter.ToString("yyyy-MM-dd HH:mm:ss UTC")</p>
+                                
+                                <p><strong>Version:</strong> @Model.Version</p>
+                                
+                                <p><strong>Signature Algorithm:</strong> @Model.SignatureAlgorithm</p>
+                                
+                                <p><strong>Public Key Algorithm:</strong> @Model.PublicKeyAlgorithm</p>
+                                
+                                <p><strong>Key Size:</strong> @Model.KeySize bits</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>Certificate Validation Status</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h5>Date Validity</h5>
+                                @if (Model.IsValid)
+                                {
+                                    <div class="alert alert-success">
+                                        <i class="bi bi-check-circle"></i> Certificate is currently valid (within date range)
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="alert alert-danger">
+                                        <i class="bi bi-x-circle"></i> Certificate is expired or not yet valid
+                                    </div>
+                                }
+                            </div>
+                            <div class="col-md-6">
+                                <h5>Certificate Chain Validation</h5>
+                                @if (!string.IsNullOrEmpty(Model.ChainValidationError))
+                                {
+                                    <div class="alert alert-warning">
+                                        <i class="bi bi-exclamation-triangle"></i> Chain validation error: @Model.ChainValidationError
+                                    </div>
+                                }
+                                else if (Model.ChainIsValid)
+                                {
+                                    <div class="alert alert-success">
+                                        <i class="bi bi-check-circle"></i> Certificate chain is valid
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="alert alert-danger">
+                                        <i class="bi bi-x-circle"></i> Certificate chain validation failed
+                                        @if (Model.ChainErrors.Any())
+                                        {
+                                            <ul class="mt-2 mb-0">
+                                                @foreach (var error in Model.ChainErrors)
+                                                {
+                                                    <li>@error</li>
+                                                }
+                                            </ul>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @if (Model.ChainElements.Any())
+        {
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h3>Certificate Chain</h3>
+                        </div>
+                        <div class="card-body">
+                            @for (int i = 0; i < Model.ChainElements.Count; i++)
+                            {
+                                var element = Model.ChainElements[i];
+                                <div class="card mb-2">
+                                    <div class="card-header">
+                                        <h6>Certificate @(i + 1) @(i == 0 ? "(End Entity)" : i == Model.ChainElements.Count - 1 ? "(Root CA)" : "(Intermediate CA)")</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <p><strong>Subject:</strong><br />
+                                                <small><code>@element.Subject</code></small></p>
+                                                <p><strong>Issuer:</strong><br />
+                                                <small><code>@element.Issuer</code></small></p>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <p><strong>Thumbprint:</strong><br />
+                                                <small><code>@element.Thumbprint</code></small></p>
+                                                <p><strong>Valid:</strong> @element.NotBefore.ToString("yyyy-MM-dd") to @element.NotAfter.ToString("yyyy-MM-dd")</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (Model.Extensions.Any())
+        {
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h3>Certificate Extensions</h3>
+                        </div>
+                        <div class="card-body">
+                            @foreach (var extension in Model.Extensions)
+                            {
+                                <p><code>@extension</code></p>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+    else
+    {
+        <div class="alert alert-warning" role="alert">
+            <h4 class="alert-heading">No Client Certificate Detected</h4>
+            <p>No client certificate was presented with this request. To test this application:</p>
+            <ul>
+                <li>Configure your browser or client to present a client certificate</li>
+                <li>Ensure the Azure Web App is configured to require or allow client certificates</li>
+                <li>Make sure the certificate is properly installed in your client</li>
+            </ul>
+            <hr>
+            <p class="mb-0">For Azure Web Apps, you may need to configure the <code>clientCertEnabled</code> setting in your app configuration.</p>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h3>Azure Web App Configuration</h3>
+            </div>
+            <div class="card-body">
+                <p>To enable client certificate authentication in Azure Web Apps, you need to:</p>
+                <ol>
+                    <li>Go to your App Service in the Azure Portal</li>
+                    <li>Navigate to <strong>Configuration</strong> → <strong>General settings</strong></li>
+                    <li>Set <strong>Client certificate mode</strong> to <strong>Allow</strong> or <strong>Require</strong></li>
+                    <li>Alternatively, use Azure CLI: <code>az webapp update --resource-group &lt;group&gt; --name &lt;app-name&gt; --set clientCertEnabled=true</code></li>
+                </ol>
+            </div>
+        </div>
+    }
+</div>
