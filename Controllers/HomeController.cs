@@ -21,6 +21,9 @@ namespace ClientCertApp.Controllers
         public IActionResult Index()
         {
             var model = new CertificateInfoViewModel();
+            
+            // Set the test URL from configuration
+            model.TestUrl = _configuration["ClientCertificateTestUrl"];
 
             // Process client certificate from request
             ProcessClientCertificate(model);
@@ -35,6 +38,9 @@ namespace ClientCertApp.Controllers
         public async Task<IActionResult> TestClientCertificate(string thumbprint)
         {
             var model = new CertificateInfoViewModel();
+            
+            // Set the test URL from configuration
+            model.TestUrl = _configuration["ClientCertificateTestUrl"];
             
             // Process client certificate from request
             ProcessClientCertificate(model);
@@ -160,6 +166,8 @@ namespace ClientCertApp.Controllers
 
         private void LoadCertificatesFromStores(CertificateInfoViewModel model)
         {
+            _logger.LogInformation("Loading certificates from certificate stores...");
+            
             // Check multiple certificate stores where WEBSITE_LOAD_CERTIFICATES might load certificates
             var storesToCheck = new[]
             {
@@ -177,9 +185,13 @@ namespace ClientCertApp.Controllers
                 {
                     using var store = new X509Store(storeInfo.Name, storeInfo.Location);
                     store.Open(OpenFlags.ReadOnly);
+                    
+                    _logger.LogInformation($"Checking store: {storeInfo.Name} ({storeInfo.Location}) - Found {store.Certificates.Count} certificates");
 
                     foreach (X509Certificate2 cert in store.Certificates)
                     {
+                        _logger.LogDebug($"Processing certificate: {cert.Subject}, HasPrivateKey: {cert.HasPrivateKey}");
+                        
                         var certInfo = new LoadedCertificateInfo
                         {
                             Subject = cert.Subject,
@@ -247,24 +259,29 @@ namespace ClientCertApp.Controllers
                         model.LoadedCertificates.Add(certInfo);
                     }
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
                     // Store might not be accessible, skip it
+                    _logger.LogWarning(ex, $"Could not access certificate store: {storeInfo.Name} ({storeInfo.Location})");
                     continue;
                 }
             }
 
             // Remove duplicates based on thumbprint
-            model.LoadedCertificates = model.LoadedCertificates
+            var uniqueCerts = model.LoadedCertificates
                 .GroupBy(c => c.Thumbprint)
                 .Select(g => g.First())
                 .OrderBy(c => c.Subject)
                 .ToList();
+            
+            model.LoadedCertificates = uniqueCerts;
+            
+            _logger.LogInformation($"Loaded {model.LoadedCertificates.Count} unique certificates, {model.LoadedCertificates.Count(c => c.HasPrivateKey)} have private keys");
         }
 
         private async Task TestCertificateClientAuthAsync(LoadedCertificateInfo certInfo, CertificateInfoViewModel model)
         {
-            var testUrl = _configuration["ClientCertificateTestUrl"];
+            var testUrl = model.TestUrl;
             
             if (string.IsNullOrEmpty(testUrl))
             {
@@ -325,7 +342,7 @@ namespace ClientCertApp.Controllers
 
                 // Build detailed result message
                 var resultBuilder = new StringBuilder();
-                resultBuilder.AppendLine($"🚀 HTTP Request completed successfully!");
+                resultBuilder.AppendLine($"🚀 HTTP Request completed!");
                 resultBuilder.AppendLine();
                 resultBuilder.AppendLine($"📋 Test Details:");
                 resultBuilder.AppendLine($"   • URL: {testUrl}");

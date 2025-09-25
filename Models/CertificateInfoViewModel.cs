@@ -15,6 +15,9 @@ namespace ClientCertApp.Models
         public string? TestResult { get; set; }
         public bool TestSuccessful { get; set; }
         public string? TestError { get; set; }
+        
+        // Configuration
+        public string? TestUrl { get; set; }
     }
 
     public class ClientCertificateInfo

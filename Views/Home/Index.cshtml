@@ -7,6 +7,32 @@
     <h1 class="display-4">Azure App Service Certificate Manager</h1>
     <p class="lead">This page displays certificates loaded via WEBSITE_LOAD_CERTIFICATES and allows testing client certificate authentication.</p>
     
+    <!-- Test URL Configuration Display -->
+    <div class="row mb-3">
+        <div class="col-md-12">
+            @if (!string.IsNullOrEmpty(Model.TestUrl))
+            {
+                <div class="alert alert-info">
+                    <h5>🔧 Test Configuration</h5>
+                    <p><strong>Test URL:</strong> <code>@Model.TestUrl</code></p>
+                    <small>Configure this URL using the <code>ClientCertificateTestUrl</code> application setting.</small>
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-warning">
+                    <h5>⚠️ Test Configuration Missing</h5>
+                    <p>No test URL configured. Set the <code>ClientCertificateTestUrl</code> application setting to enable certificate testing.</p>
+                    <p><strong>Example values:</strong></p>
+                    <ul>
+                        <li><code>https://httpbin.org/get</code> - Basic HTTP testing</li>
+                        <li><code>https://client.badssl.com/</code> - Client certificate testing</li>
+                    </ul>
+                </div>
+            }
+        </div>
+    </div>
+    
     <!-- Test Results Section -->
     @if (!string.IsNullOrEmpty(Model.TestResult) || !string.IsNullOrEmpty(Model.TestError))
     {
@@ -20,14 +46,22 @@
                         @if (Model.TestSuccessful && !string.IsNullOrEmpty(Model.TestResult))
                         {
                             <div class="alert alert-success">
-                                <pre style="white-space: pre-wrap; margin-bottom: 0;">@Model.TestResult</pre>
+                                <h5>✅ Test Successful</h5>
+                                <pre style="white-space: pre-wrap; margin-bottom: 0; font-size: 0.9em;">@Model.TestResult</pre>
                             </div>
                         }
                         @if (!string.IsNullOrEmpty(Model.TestError))
                         {
                             <div class="alert alert-danger">
                                 <h5>❌ Test Failed</h5>
-                                <p>@Model.TestError</p>
+                                <pre style="white-space: pre-wrap; margin-bottom: 0; font-size: 0.9em;">@Model.TestError</pre>
+                            </div>
+                        }
+                        @if (!Model.TestSuccessful && !string.IsNullOrEmpty(Model.TestResult))
+                        {
+                            <div class="alert alert-warning">
+                                <h5>⚠️ Test Completed with Issues</h5>
+                                <pre style="white-space: pre-wrap; margin-bottom: 0; font-size: 0.9em;">@Model.TestResult</pre>
                             </div>
                         }
                     </div>
@@ -47,6 +81,19 @@
                 <div class="card-body">
                     @if (Model.LoadedCertificates.Any())
                     {
+                        <!-- Summary stats -->
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <div class="alert alert-light">
+                                    <strong>Summary:</strong>
+                                    @Model.LoadedCertificates.Count total certificates,
+                                    @Model.LoadedCertificates.Count(c => c.HasPrivateKey) with private keys,
+                                    @Model.LoadedCertificates.Count(c => c.HasClientAuthenticationEKU) with Client Authentication EKU,
+                                    @Model.LoadedCertificates.Count(c => c.IsValid) currently valid
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="table-responsive">
                             <table class="table table-striped">
                                 <thead>
@@ -71,7 +118,7 @@
                                                     <br><small class="text-muted">@cert.FriendlyName</small>
                                                 }
                                             </td>
-                                            <td><code>@cert.Thumbprint.Substring(0, 8)...</code></td>
+                                            <td><code style="font-size: 0.8em;">@cert.Thumbprint.Substring(0, 12)...</code></td>
                                             <td>
                                                 @cert.NotAfter.ToString("yyyy-MM-dd")
                                                 @if (!cert.IsValid)
@@ -103,29 +150,57 @@
                                                 <small>@cert.StoreName<br>(@cert.StoreLocation)</small>
                                             </td>
                                             <td>
-                                                <button type="button" class="btn btn-sm btn-outline-info" onclick="showCertDetails('@cert.Thumbprint')">
-                                                    Details
-                                                </button>
-                                                @if (cert.HasClientAuthenticationEKU && cert.HasPrivateKey)
-                                                {
-                                                    <form method="post" asp-action="TestClientCertificate" style="display: inline;">
-                                                        <input type="hidden" name="thumbprint" value="@cert.Thumbprint" />
-                                                        <button type="submit" class="btn btn-sm btn-success">
-                                                            🧪 Test
-                                                        </button>
-                                                    </form>
-                                                }
-                                                else
-                                                {
-                                                    <button type="button" class="btn btn-sm btn-secondary" disabled title="Missing Client Auth EKU or Private Key">
-                                                        🧪 Test
+                                                <div class="btn-group-vertical" style="width: 100%;">
+                                                    <button type="button" class="btn btn-sm btn-outline-info mb-1" onclick="showCertDetails('@cert.Thumbprint')">
+                                                        Details
                                                     </button>
-                                                }
+                                                
+                                                    @if (cert.HasPrivateKey && !string.IsNullOrEmpty(Model.TestUrl))
+                                                    {
+                                                        <form method="post" asp-action="TestClientCertificate" style="display: inline;">
+                                                            <input type="hidden" name="thumbprint" value="@cert.Thumbprint" />
+                                                            @if (cert.HasClientAuthenticationEKU)
+                                                            {
+                                                                <button type="submit" class="btn btn-sm btn-success" title="Test with Client Authentication EKU">
+                                                                    🧪 Test
+                                                                </button>
+                                                            }
+                                                            else
+                                                            {
+                                                                <button type="submit" class="btn btn-sm btn-warning" title="Test without Client Authentication EKU - may fail">
+                                                                    ⚠️ Test
+                                                                </button>
+                                                            }
+                                                        </form>
+                                                    }
+                                                    else if (!cert.HasPrivateKey)
+                                                    {
+                                                        <button type="button" class="btn btn-sm btn-secondary" disabled title="No private key available">
+                                                            🔒 No Key
+                                                        </button>
+                                                    }
+                                                    else if (string.IsNullOrEmpty(Model.TestUrl))
+                                                    {
+                                                        <button type="button" class="btn btn-sm btn-secondary" disabled title="Test URL not configured">
+                                                            🔧 No URL
+                                                        </button>
+                                                    }
+                                                </div>
                                             </td>
                                         </tr>
                                     }
                                 </tbody>
                             </table>
+                        </div>
+
+                        <div class="mt-3">
+                            <h6>Legend:</h6>
+                            <ul class="list-unstyled">
+                                <li><span class="badge bg-success">🧪 Test</span> - Certificate has Client Authentication EKU and private key</li>
+                                <li><span class="badge bg-warning">⚠️ Test</span> - Certificate has private key but NO Client Authentication EKU (test to see behavior)</li>
+                                <li><span class="badge bg-secondary">🔒 No Key</span> - Certificate has no accessible private key</li>
+                                <li><span class="badge bg-secondary">🔧 No URL</span> - Test URL not configured</li>
+                            </ul>
                         </div>
 
                         <!-- Certificate Details Modals -->
@@ -141,8 +216,8 @@
                                         <div class="modal-body">
                                             <div class="row">
                                                 <div class="col-md-6">
-                                                    <p><strong>Subject:</strong><br><code>@cert.Subject</code></p>
-                                                    <p><strong>Issuer:</strong><br><code>@cert.Issuer</code></p>
+                                                    <p><strong>Subject:</strong><br><code style="font-size: 0.85em;">@cert.Subject</code></p>
+                                                    <p><strong>Issuer:</strong><br><code style="font-size: 0.85em;">@cert.Issuer</code></p>
                                                     <p><strong>Serial Number:</strong><br><code>@cert.SerialNumber</code></p>
                                                     <p><strong>Thumbprint:</strong><br><code>@cert.Thumbprint</code></p>
                                                 </div>
@@ -151,6 +226,7 @@
                                                     <p><strong>Valid Until:</strong> @cert.NotAfter.ToString("yyyy-MM-dd HH:mm:ss")</p>
                                                     <p><strong>Store:</strong> @cert.StoreName (@cert.StoreLocation)</p>
                                                     <p><strong>Has Private Key:</strong> @(cert.HasPrivateKey ? "Yes" : "No")</p>
+                                                    <p><strong>Friendly Name:</strong> @(string.IsNullOrEmpty(cert.FriendlyName) ? "None" : cert.FriendlyName)</p>
                                                 </div>
                                             </div>
                                             
@@ -160,9 +236,15 @@
                                                 <ul>
                                                     @foreach (var eku in cert.ExtendedKeyUsages)
                                                     {
-                                                        <li>@eku</li>
+                                                        <li>@eku @if(eku.Contains("Client Authentication")) {<span class="badge bg-success">Client Auth</span>}</li>
                                                     }
                                                 </ul>
+                                            }
+                                            else
+                                            {
+                                                <div class="alert alert-warning">
+                                                    <strong>No Extended Key Usages found</strong> - This certificate may not be suitable for client authentication.
+                                                </div>
                                             }
                                             
                                             @if (cert.KeyUsages.Any())
@@ -191,11 +273,11 @@
                                 <li>The application doesn't have permission to access the certificate stores</li>
                                 <li>You're running locally without certificates installed</li>
                             </ul>
-                            <p><strong>To load certificates in Azure App Service:</strong></p>
+                            <p><strong>For local testing, you can:</strong></p>
                             <ol>
-                                <li>Upload your certificates to the App Service</li>
-                                <li>Set the WEBSITE_LOAD_CERTIFICATES app setting to the thumbprints you want to load (or * for all)</li>
-                                <li>Restart your app</li>
+                                <li>Install some certificates in your Windows certificate store (certmgr.msc)</li>
+                                <li>Use self-signed certificates for testing</li>
+                                <li>Import certificates from your browser or other applications</li>
                             </ol>
                         </div>
                     }
@@ -340,9 +422,15 @@
         <div class="col-md-12">
             <div class="card">
                 <div class="card-header">
-                    <h3>⚙️ Azure App Service Configuration</h3>
+                    <h3>⚙️ Configuration Help</h3>
                 </div>
                 <div class="card-body">
+                    <h5>Application Settings Required:</h5>
+                    <ul>
+                        <li><code>ClientCertificateTestUrl</code> - URL to test client certificates against (currently: <code>@(Model.TestUrl ?? "Not configured")</code>)</li>
+                        <li><code>WEBSITE_LOAD_CERTIFICATES</code> - Thumbprints to load or * for all certificates</li>
+                    </ul>
+
                     <h5>To load certificates with WEBSITE_LOAD_CERTIFICATES:</h5>
                     <ol>
                         <li>Upload your certificates to your App Service (Settings → TLS/SSL settings → Private Key Certificates)</li>
@@ -361,6 +449,13 @@
                         <li>Set <strong>Client certificate mode</strong> to <strong>Allow</strong> or <strong>Require</strong></li>
                         <li>Save and restart your app</li>
                     </ol>
+
+                    <h5>Test URL Examples:</h5>
+                    <ul>
+                        <li><code>https://httpbin.org/get</code> - Simple HTTP testing service (doesn't require client certs)</li>
+                        <li><code>https://your-other-app.azurewebsites.net/api/secure</code> - Your own API requiring client certificates</li>
+                        <li><code>https://client.badssl.com/</code> - BadSSL client certificate test site</li>
+                    </ul>
                 </div>
             </div>
         </div>
