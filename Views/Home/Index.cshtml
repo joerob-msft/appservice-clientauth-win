@@ -1,74 +1,276 @@
 @model CertificateInfoViewModel
 @{
-    ViewData["Title"] = "Client Certificate Information";
+    ViewData["Title"] = "Azure App Service Certificate Manager";
 }
 
 <div class="container">
-    <h1 class="display-4">Client Certificate Information</h1>
-    <p class="lead">This page displays information about the client certificate presented to the server.</p>
+    <h1 class="display-4">Azure App Service Certificate Manager</h1>
+    <p class="lead">This page displays certificates loaded via WEBSITE_LOAD_CERTIFICATES and allows testing client certificate authentication.</p>
     
-    @if (Model.HasCertificate)
+    <!-- Test Results Section -->
+    @if (!string.IsNullOrEmpty(Model.TestResult) || !string.IsNullOrEmpty(Model.TestError))
     {
-        <div class="alert alert-success" role="alert">
-            <i class="bi bi-check-circle-fill"></i> Client certificate detected!
-        </div>
-
-        <div class="row">
+        <div class="row mb-4">
             <div class="col-md-12">
-                <div class="card mb-4">
+                <div class="card">
                     <div class="card-header">
-                        <h3>Certificate Basic Information</h3>
+                        <h3>🧪 Client Certificate Test Results</h3>
                     </div>
                     <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <p><strong>Subject:</strong><br />
-                                <code>@Model.Subject</code></p>
-                                
-                                <p><strong>Issuer:</strong><br />
-                                <code>@Model.Issuer</code></p>
-                                
-                                <p><strong>Thumbprint:</strong><br />
-                                <code>@Model.Thumbprint</code></p>
-                                
-                                <p><strong>Serial Number:</strong><br />
-                                <code>@Model.SerialNumber</code></p>
+                        @if (Model.TestSuccessful && !string.IsNullOrEmpty(Model.TestResult))
+                        {
+                            <div class="alert alert-success">
+                                <pre style="white-space: pre-wrap; margin-bottom: 0;">@Model.TestResult</pre>
                             </div>
-                            <div class="col-md-6">
-                                <p><strong>Valid From:</strong><br />
-                                @Model.NotBefore.ToString("yyyy-MM-dd HH:mm:ss UTC")</p>
-                                
-                                <p><strong>Valid Until:</strong><br />
-                                @Model.NotAfter.ToString("yyyy-MM-dd HH:mm:ss UTC")</p>
-                                
-                                <p><strong>Version:</strong> @Model.Version</p>
-                                
-                                <p><strong>Signature Algorithm:</strong> @Model.SignatureAlgorithm</p>
-                                
-                                <p><strong>Public Key Algorithm:</strong> @Model.PublicKeyAlgorithm</p>
-                                
-                                <p><strong>Key Size:</strong> @Model.KeySize bits</p>
+                        }
+                        @if (!string.IsNullOrEmpty(Model.TestError))
+                        {
+                            <div class="alert alert-danger">
+                                <h5>❌ Test Failed</h5>
+                                <p>@Model.TestError</p>
                             </div>
-                        </div>
+                        }
                     </div>
                 </div>
             </div>
         </div>
+    }
 
+    <!-- Loaded Certificates Section -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h3>📋 Loaded Certificates (@Model.LoadedCertificates.Count found)</h3>
+                    <small class="text-muted">Certificates available in the certificate stores (loaded via WEBSITE_LOAD_CERTIFICATES)</small>
+                </div>
+                <div class="card-body">
+                    @if (Model.LoadedCertificates.Any())
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Subject</th>
+                                        <th>Thumbprint</th>
+                                        <th>Valid Until</th>
+                                        <th>Private Key</th>
+                                        <th>Client Auth EKU</th>
+                                        <th>Store</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var cert in Model.LoadedCertificates)
+                                    {
+                                        <tr class="@(cert.IsValid ? "" : "table-warning")">
+                                            <td>
+                                                <strong>@(cert.Subject.Length > 50 ? cert.Subject.Substring(0, 50) + "..." : cert.Subject)</strong>
+                                                @if (!string.IsNullOrEmpty(cert.FriendlyName))
+                                                {
+                                                    <br><small class="text-muted">@cert.FriendlyName</small>
+                                                }
+                                            </td>
+                                            <td><code>@cert.Thumbprint.Substring(0, 8)...</code></td>
+                                            <td>
+                                                @cert.NotAfter.ToString("yyyy-MM-dd")
+                                                @if (!cert.IsValid)
+                                                {
+                                                    <br><small class="text-danger">⚠️ Expired</small>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (cert.HasPrivateKey)
+                                                {
+                                                    <span class="badge bg-success">✓ Yes</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-warning">✗ No</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (cert.HasClientAuthenticationEKU)
+                                                {
+                                                    <span class="badge bg-success">✓ Yes</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-secondary">✗ No</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                <small>@cert.StoreName<br>(@cert.StoreLocation)</small>
+                                            </td>
+                                            <td>
+                                                <button type="button" class="btn btn-sm btn-outline-info" onclick="showCertDetails('@cert.Thumbprint')">
+                                                    Details
+                                                </button>
+                                                @if (cert.HasClientAuthenticationEKU && cert.HasPrivateKey)
+                                                {
+                                                    <form method="post" asp-action="TestClientCertificate" style="display: inline;">
+                                                        <input type="hidden" name="thumbprint" value="@cert.Thumbprint" />
+                                                        <button type="submit" class="btn btn-sm btn-success">
+                                                            🧪 Test
+                                                        </button>
+                                                    </form>
+                                                }
+                                                else
+                                                {
+                                                    <button type="button" class="btn btn-sm btn-secondary" disabled title="Missing Client Auth EKU or Private Key">
+                                                        🧪 Test
+                                                    </button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Certificate Details Modals -->
+                        @foreach (var cert in Model.LoadedCertificates)
+                        {
+                            <div class="modal fade" id="certModal-@cert.Thumbprint" tabindex="-1">
+                                <div class="modal-dialog modal-lg">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Certificate Details</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    <p><strong>Subject:</strong><br><code>@cert.Subject</code></p>
+                                                    <p><strong>Issuer:</strong><br><code>@cert.Issuer</code></p>
+                                                    <p><strong>Serial Number:</strong><br><code>@cert.SerialNumber</code></p>
+                                                    <p><strong>Thumbprint:</strong><br><code>@cert.Thumbprint</code></p>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <p><strong>Valid From:</strong> @cert.NotBefore.ToString("yyyy-MM-dd HH:mm:ss")</p>
+                                                    <p><strong>Valid Until:</strong> @cert.NotAfter.ToString("yyyy-MM-dd HH:mm:ss")</p>
+                                                    <p><strong>Store:</strong> @cert.StoreName (@cert.StoreLocation)</p>
+                                                    <p><strong>Has Private Key:</strong> @(cert.HasPrivateKey ? "Yes" : "No")</p>
+                                                </div>
+                                            </div>
+                                            
+                                            @if (cert.ExtendedKeyUsages.Any())
+                                            {
+                                                <h6>Extended Key Usages:</h6>
+                                                <ul>
+                                                    @foreach (var eku in cert.ExtendedKeyUsages)
+                                                    {
+                                                        <li>@eku</li>
+                                                    }
+                                                </ul>
+                                            }
+                                            
+                                            @if (cert.KeyUsages.Any())
+                                            {
+                                                <h6>Key Usages:</h6>
+                                                <ul>
+                                                    @foreach (var usage in cert.KeyUsages)
+                                                    {
+                                                        <li>@usage</li>
+                                                    }
+                                                </ul>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="alert alert-info">
+                            <h4>No Certificates Found</h4>
+                            <p>No certificates were found in the certificate stores. This could mean:</p>
+                            <ul>
+                                <li>No certificates have been loaded via WEBSITE_LOAD_CERTIFICATES</li>
+                                <li>The application doesn't have permission to access the certificate stores</li>
+                                <li>You're running locally without certificates installed</li>
+                            </ul>
+                            <p><strong>To load certificates in Azure App Service:</strong></p>
+                            <ol>
+                                <li>Upload your certificates to the App Service</li>
+                                <li>Set the WEBSITE_LOAD_CERTIFICATES app setting to the thumbprints you want to load (or * for all)</li>
+                                <li>Restart your app</li>
+                            </ol>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Client Certificate from Request Section -->
+    @if (Model.HasClientCertificate && Model.ClientCertificate != null)
+    {
         <div class="row">
             <div class="col-md-12">
                 <div class="card mb-4">
                     <div class="card-header">
-                        <h3>Certificate Validation Status</h3>
+                        <h3>🔒 Client Certificate from HTTP Request</h3>
+                        <small class="text-muted">Certificate presented with this HTTP request</small>
                     </div>
                     <div class="card-body">
+                        <div class="alert alert-success" role="alert">
+                            <i class="bi bi-check-circle-fill"></i> Client certificate detected in request!
+                        </div>
+
                         <div class="row">
                             <div class="col-md-6">
+                                <p><strong>Subject:</strong><br />
+                                <code>@Model.ClientCertificate.Subject</code></p>
+                                
+                                <p><strong>Issuer:</strong><br />
+                                <code>@Model.ClientCertificate.Issuer</code></p>
+                                
+                                <p><strong>Thumbprint:</strong><br />
+                                <code>@Model.ClientCertificate.Thumbprint</code></p>
+                                
+                                <p><strong>Serial Number:</strong><br />
+                                <code>@Model.ClientCertificate.SerialNumber</code></p>
+                            </div>
+                            <div class="col-md-6">
+                                <p><strong>Valid From:</strong><br />
+                                @Model.ClientCertificate.NotBefore.ToString("yyyy-MM-dd HH:mm:ss UTC")</p>
+                                
+                                <p><strong>Valid Until:</strong><br />
+                                @Model.ClientCertificate.NotAfter.ToString("yyyy-MM-dd HH:mm:ss UTC")</p>
+                                
+                                <p><strong>Version:</strong> @Model.ClientCertificate.Version</p>
+                                
+                                <p><strong>Signature Algorithm:</strong> @Model.ClientCertificate.SignatureAlgorithm</p>
+                                
+                                <p><strong>Public Key Algorithm:</strong> @Model.ClientCertificate.PublicKeyAlgorithm</p>
+                                
+                                <p><strong>Key Size:</strong> @Model.ClientCertificate.KeySize bits</p>
+                            </div>
+                        </div>
+
+                        @if (Model.ClientCertificate.ExtendedKeyUsages.Any())
+                        {
+                            <div class="mt-3">
+                                <h5>Extended Key Usages:</h5>
+                                <ul>
+                                    @foreach (var eku in Model.ClientCertificate.ExtendedKeyUsages)
+                                    {
+                                        <li>@eku</li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+
+                        <!-- Certificate validation status -->
+                        <div class="row mt-3">
+                            <div class="col-md-6">
                                 <h5>Date Validity</h5>
-                                @if (Model.IsValid)
+                                @if (Model.ClientCertificate.IsValid)
                                 {
                                     <div class="alert alert-success">
-                                        <i class="bi bi-check-circle"></i> Certificate is currently valid (within date range)
+                                        <i class="bi bi-check-circle"></i> Certificate is currently valid
                                     </div>
                                 }
                                 else
@@ -80,13 +282,13 @@
                             </div>
                             <div class="col-md-6">
                                 <h5>Certificate Chain Validation</h5>
-                                @if (!string.IsNullOrEmpty(Model.ChainValidationError))
+                                @if (!string.IsNullOrEmpty(Model.ClientCertificate.ChainValidationError))
                                 {
                                     <div class="alert alert-warning">
-                                        <i class="bi bi-exclamation-triangle"></i> Chain validation error: @Model.ChainValidationError
+                                        <i class="bi bi-exclamation-triangle"></i> Chain validation error: @Model.ClientCertificate.ChainValidationError
                                     </div>
                                 }
-                                else if (Model.ChainIsValid)
+                                else if (Model.ClientCertificate.ChainIsValid)
                                 {
                                     <div class="alert alert-success">
                                         <i class="bi bi-check-circle"></i> Certificate chain is valid
@@ -96,10 +298,10 @@
                                 {
                                     <div class="alert alert-danger">
                                         <i class="bi bi-x-circle"></i> Certificate chain validation failed
-                                        @if (Model.ChainErrors.Any())
+                                        @if (Model.ClientCertificate.ChainErrors.Any())
                                         {
                                             <ul class="mt-2 mb-0">
-                                                @foreach (var error in Model.ChainErrors)
+                                                @foreach (var error in Model.ClientCertificate.ChainErrors)
                                                 {
                                                     <li>@error</li>
                                                 }
@@ -113,92 +315,62 @@
                 </div>
             </div>
         </div>
-
-        @if (Model.ChainElements.Any())
-        {
-            <div class="row">
-                <div class="col-md-12">
-                    <div class="card mb-4">
-                        <div class="card-header">
-                            <h3>Certificate Chain</h3>
-                        </div>
-                        <div class="card-body">
-                            @for (int i = 0; i < Model.ChainElements.Count; i++)
-                            {
-                                var element = Model.ChainElements[i];
-                                <div class="card mb-2">
-                                    <div class="card-header">
-                                        <h6>Certificate @(i + 1) @(i == 0 ? "(End Entity)" : i == Model.ChainElements.Count - 1 ? "(Root CA)" : "(Intermediate CA)")</h6>
-                                    </div>
-                                    <div class="card-body">
-                                        <div class="row">
-                                            <div class="col-md-6">
-                                                <p><strong>Subject:</strong><br />
-                                                <small><code>@element.Subject</code></small></p>
-                                                <p><strong>Issuer:</strong><br />
-                                                <small><code>@element.Issuer</code></small></p>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <p><strong>Thumbprint:</strong><br />
-                                                <small><code>@element.Thumbprint</code></small></p>
-                                                <p><strong>Valid:</strong> @element.NotBefore.ToString("yyyy-MM-dd") to @element.NotAfter.ToString("yyyy-MM-dd")</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            }
-                        </div>
-                    </div>
-                </div>
-            </div>
-        }
-
-        @if (Model.Extensions.Any())
-        {
-            <div class="row">
-                <div class="col-md-12">
-                    <div class="card mb-4">
-                        <div class="card-header">
-                            <h3>Certificate Extensions</h3>
-                        </div>
-                        <div class="card-body">
-                            @foreach (var extension in Model.Extensions)
-                            {
-                                <p><code>@extension</code></p>
-                            }
-                        </div>
-                    </div>
-                </div>
-            </div>
-        }
     }
     else
     {
-        <div class="alert alert-warning" role="alert">
-            <h4 class="alert-heading">No Client Certificate Detected</h4>
-            <p>No client certificate was presented with this request. To test this application:</p>
-            <ul>
-                <li>Configure your browser or client to present a client certificate</li>
-                <li>Ensure the Azure Web App is configured to require or allow client certificates</li>
-                <li>Make sure the certificate is properly installed in your client</li>
-            </ul>
-            <hr>
-            <p class="mb-0">For Azure Web Apps, you may need to configure the <code>clientCertEnabled</code> setting in your app configuration.</p>
-        </div>
-        
-        <div class="card">
-            <div class="card-header">
-                <h3>Azure Web App Configuration</h3>
-            </div>
-            <div class="card-body">
-                <p>To enable client certificate authentication in Azure Web Apps, you need to:</p>
-                <ol>
-                    <li>Go to your App Service in the Azure Portal</li>
-                    <li>Navigate to <strong>Configuration</strong> → <strong>General settings</strong></li>
-                    <li>Set <strong>Client certificate mode</strong> to <strong>Allow</strong> or <strong>Require</strong></li>
-                    <li>Alternatively, use Azure CLI: <code>az webapp update --resource-group &lt;group&gt; --name &lt;app-name&gt; --set clientCertEnabled=true</code></li>
-                </ol>
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>🔒 Client Certificate from HTTP Request</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info" role="alert">
+                            <h4 class="alert-heading">No Client Certificate in Request</h4>
+                            <p>No client certificate was presented with this HTTP request. The certificates shown above are loaded from the certificate store via WEBSITE_LOAD_CERTIFICATES.</p>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     }
+
+    <!-- Configuration Help -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>⚙️ Azure App Service Configuration</h3>
+                </div>
+                <div class="card-body">
+                    <h5>To load certificates with WEBSITE_LOAD_CERTIFICATES:</h5>
+                    <ol>
+                        <li>Upload your certificates to your App Service (Settings → TLS/SSL settings → Private Key Certificates)</li>
+                        <li>Add the <code>WEBSITE_LOAD_CERTIFICATES</code> application setting with:
+                            <ul>
+                                <li>Specific thumbprints: <code>thumbprint1,thumbprint2</code></li>
+                                <li>All certificates: <code>*</code></li>
+                            </ul>
+                        </li>
+                        <li>Restart your App Service</li>
+                    </ol>
+                    
+                    <h5>To enable client certificate authentication:</h5>
+                    <ol>
+                        <li>Go to your App Service → Configuration → General settings</li>
+                        <li>Set <strong>Client certificate mode</strong> to <strong>Allow</strong> or <strong>Require</strong></li>
+                        <li>Save and restart your app</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
+
+<script>
+function showCertDetails(thumbprint) {
+    var modalId = '#certModal-' + thumbprint;
+    var modal = new bootstrap.Modal(document.querySelector(modalId));
+    modal.show();
+}
+</script>
