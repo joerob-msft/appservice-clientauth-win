@@ -1,11 +1,23 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Cryptography.X509Certificates;
 using ClientCertApp.Models;
+using System.Text;
+using System.Net.Security;
+using System.Security.Authentication;
 
 namespace ClientCertApp.Controllers
 {
     public class HomeController : Controller
     {
+        private readonly IConfiguration _configuration;
+        private readonly ILogger<HomeController> _logger;
+
+        public HomeController(IConfiguration configuration, ILogger<HomeController> logger)
+        {
+            _configuration = configuration;
+            _logger = logger;
+        }
+
         public IActionResult Index()
         {
             var model = new CertificateInfoViewModel();
@@ -20,7 +32,7 @@ namespace ClientCertApp.Controllers
         }
 
         [HttpPost]
-        public IActionResult TestClientCertificate(string thumbprint)
+        public async Task<IActionResult> TestClientCertificate(string thumbprint)
         {
             var model = new CertificateInfoViewModel();
             
@@ -41,7 +53,7 @@ namespace ClientCertApp.Controllers
             else
             {
                 // Test the certificate
-                TestCertificateClientAuth(certToTest, model);
+                await TestCertificateClientAuthAsync(certToTest, model);
             }
 
             return View("Index", model);
@@ -250,56 +262,179 @@ namespace ClientCertApp.Controllers
                 .ToList();
         }
 
-        private void TestCertificateClientAuth(LoadedCertificateInfo certInfo, CertificateInfoViewModel model)
+        private async Task TestCertificateClientAuthAsync(LoadedCertificateInfo certInfo, CertificateInfoViewModel model)
         {
+            var testUrl = _configuration["ClientCertificateTestUrl"];
+            
+            if (string.IsNullOrEmpty(testUrl))
+            {
+                model.TestError = "ClientCertificateTestUrl is not configured in application settings.";
+                model.TestSuccessful = false;
+                return;
+            }
+
             try
             {
-                // Check if certificate has Client Authentication EKU
+                // Load the actual certificate from the store for the HTTP call
+                var certificate = GetCertificateFromStore(certInfo.Thumbprint, certInfo.StoreLocation, certInfo.StoreName);
+                
+                if (certificate == null)
+                {
+                    model.TestError = $"Could not load certificate from store: {certInfo.Subject}";
+                    model.TestSuccessful = false;
+                    return;
+                }
+
+                // Check if certificate has private key (required for client authentication)
+                if (!certificate.HasPrivateKey)
+                {
+                    model.TestError = $"Certificate '{certInfo.Subject}' does not have a private key accessible. Cannot use for client authentication.";
+                    model.TestSuccessful = false;
+                    return;
+                }
+
+                var startTime = DateTime.UtcNow;
+
+                // Create HTTP client handler with the certificate
+                using var handler = new HttpClientHandler();
+                handler.ClientCertificates.Add(certificate);
+                
+                // Configure SSL/TLS options
+                handler.ServerCertificateCustomValidationCallback = (message, cert, chain, sslPolicyErrors) =>
+                {
+                    // For testing purposes, you might want to accept all certificates
+                    // In production, implement proper certificate validation
+                    _logger.LogInformation($"Server certificate validation: {sslPolicyErrors}");
+                    return true; // Accept all certificates for testing
+                };
+
+                using var httpClient = new HttpClient(handler);
+                httpClient.Timeout = TimeSpan.FromSeconds(30);
+
+                // Add some headers to help with debugging
+                httpClient.DefaultRequestHeaders.Add("User-Agent", "Azure-AppService-ClientCert-Tester/1.0");
+                httpClient.DefaultRequestHeaders.Add("X-Test-Certificate-Thumbprint", certInfo.Thumbprint);
+
+                _logger.LogInformation($"Making HTTP request to {testUrl} with certificate: {certInfo.Subject}");
+
+                // Make the HTTP request
+                var response = await httpClient.GetAsync(testUrl);
+                var responseContent = await response.Content.ReadAsStringAsync();
+                var endTime = DateTime.UtcNow;
+                var duration = endTime - startTime;
+
+                // Build detailed result message
+                var resultBuilder = new StringBuilder();
+                resultBuilder.AppendLine($"🚀 HTTP Request completed successfully!");
+                resultBuilder.AppendLine();
+                resultBuilder.AppendLine($"📋 Test Details:");
+                resultBuilder.AppendLine($"   • URL: {testUrl}");
+                resultBuilder.AppendLine($"   • Certificate: {certInfo.Subject}");
+                resultBuilder.AppendLine($"   • Thumbprint: {certInfo.Thumbprint}");
+                resultBuilder.AppendLine($"   • Has Client Auth EKU: {(certInfo.HasClientAuthenticationEKU ? "✅ Yes" : "⚠️ No")}");
+                resultBuilder.AppendLine($"   • Request Duration: {duration.TotalMilliseconds:F0}ms");
+                resultBuilder.AppendLine();
+                
+                resultBuilder.AppendLine($"📡 HTTP Response:");
+                resultBuilder.AppendLine($"   • Status: {(int)response.StatusCode} {response.ReasonPhrase}");
+                resultBuilder.AppendLine($"   • Content Length: {responseContent.Length} bytes");
+                
+                // Add response headers
+                if (response.Headers.Any())
+                {
+                    resultBuilder.AppendLine($"   • Response Headers:");
+                    foreach (var header in response.Headers)
+                    {
+                        resultBuilder.AppendLine($"     - {header.Key}: {string.Join(", ", header.Value)}");
+                    }
+                }
+
+                // Add content headers
+                if (response.Content.Headers.Any())
+                {
+                    resultBuilder.AppendLine($"   • Content Headers:");
+                    foreach (var header in response.Content.Headers)
+                    {
+                        resultBuilder.AppendLine($"     - {header.Key}: {string.Join(", ", header.Value)}");
+                    }
+                }
+
+                resultBuilder.AppendLine();
+                resultBuilder.AppendLine($"📄 Response Body (first 1000 chars):");
+                resultBuilder.AppendLine(responseContent.Length > 1000 ? 
+                    responseContent.Substring(0, 1000) + "..." : 
+                    responseContent);
+
+                // Warning if no Client Auth EKU
                 if (!certInfo.HasClientAuthenticationEKU)
                 {
-                    model.TestError = $"Certificate '{certInfo.Subject}' does not have Client Authentication Extended Key Usage (1.3.6.1.5.5.7.3.2). " +
-                                     $"Available EKUs: {string.Join(", ", certInfo.ExtendedKeyUsages)}";
-                    model.TestSuccessful = false;
-                    return;
+                    resultBuilder.AppendLine();
+                    resultBuilder.AppendLine($"⚠️ WARNING: This certificate does not have Client Authentication Extended Key Usage (1.3.6.1.5.5.7.3.2).");
+                    resultBuilder.AppendLine($"   Some servers may reject this certificate for client authentication.");
+                    resultBuilder.AppendLine($"   Available EKUs: {string.Join(", ", certInfo.ExtendedKeyUsages)}");
                 }
 
-                // Check if certificate has private key
-                if (!certInfo.HasPrivateKey)
-                {
-                    model.TestError = $"Certificate '{certInfo.Subject}' does not have a private key accessible.";
-                    model.TestSuccessful = false;
-                    return;
-                }
-
-                // Check if certificate is valid (not expired)
-                if (!certInfo.IsValid)
-                {
-                    model.TestError = $"Certificate '{certInfo.Subject}' is not currently valid (expired or not yet valid). " +
-                                     $"Valid from {certInfo.NotBefore:yyyy-MM-dd} to {certInfo.NotAfter:yyyy-MM-dd}";
-                    model.TestSuccessful = false;
-                    return;
-                }
-
-                // Simulate a successful client certificate operation
-                // In a real implementation, this would make an actual HTTPS call using the certificate
-                model.TestResult = $"✅ Certificate '{certInfo.Subject}' successfully passed client authentication validation!\n\n" +
-                                  $"Certificate Details:\n" +
-                                  $"- Thumbprint: {certInfo.Thumbprint}\n" +
-                                  $"- Has Client Authentication EKU: Yes\n" +
-                                  $"- Has Private Key: Yes\n" +
-                                  $"- Valid Until: {certInfo.NotAfter:yyyy-MM-dd HH:mm:ss}\n" +
-                                  $"- Store: {certInfo.StoreName} ({certInfo.StoreLocation})\n\n" +
-                                  $"🔧 This is a simulated test. In a real scenario, this would:\n" +
-                                  $"1. Create an HttpClient with the certificate attached\n" +
-                                  $"2. Make an HTTPS request to a server requiring client certificates\n" +
-                                  $"3. Verify the server accepts the certificate for authentication";
+                model.TestResult = resultBuilder.ToString();
+                model.TestSuccessful = response.IsSuccessStatusCode;
                 
-                model.TestSuccessful = true;
+                if (!response.IsSuccessStatusCode)
+                {
+                    model.TestError = $"HTTP request returned error status: {(int)response.StatusCode} {response.ReasonPhrase}";
+                }
+                
+                _logger.LogInformation($"Certificate test completed. Success: {model.TestSuccessful}, Status: {response.StatusCode}");
+            }
+            catch (HttpRequestException httpEx)
+            {
+                var errorBuilder = new StringBuilder();
+                errorBuilder.AppendLine($"❌ HTTP Request Failed");
+                errorBuilder.AppendLine($"URL: {testUrl}");
+                errorBuilder.AppendLine($"Certificate: {certInfo.Subject}");
+                errorBuilder.AppendLine($"Error: {httpEx.Message}");
+                
+                if (httpEx.InnerException != null)
+                {
+                    errorBuilder.AppendLine($"Inner Exception: {httpEx.InnerException.Message}");
+                }
+                
+                if (!certInfo.HasClientAuthenticationEKU)
+                {
+                    errorBuilder.AppendLine();
+                    errorBuilder.AppendLine($"⚠️ NOTE: This certificate does not have Client Authentication EKU.");
+                    errorBuilder.AppendLine($"This may be the reason for the failure if the server requires it.");
+                }
+
+                model.TestError = errorBuilder.ToString();
+                model.TestSuccessful = false;
+                
+                _logger.LogError(httpEx, $"HTTP request failed for certificate {certInfo.Thumbprint}");
             }
             catch (Exception ex)
             {
-                model.TestError = $"Error testing certificate: {ex.Message}";
+                model.TestError = $"❌ Unexpected error testing certificate '{certInfo.Subject}': {ex.Message}";
                 model.TestSuccessful = false;
+                
+                _logger.LogError(ex, $"Unexpected error testing certificate {certInfo.Thumbprint}");
+            }
+        }
+
+        private X509Certificate2? GetCertificateFromStore(string thumbprint, string storeLocation, string storeName)
+        {
+            try
+            {
+                var location = Enum.Parse<StoreLocation>(storeLocation);
+                var name = Enum.Parse<StoreName>(storeName);
+                
+                using var store = new X509Store(name, location);
+                store.Open(OpenFlags.ReadOnly);
+                
+                var certs = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, false);
+                return certs.Count > 0 ? certs[0] : null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error loading certificate {thumbprint} from {storeLocation}/{storeName}");
+                return null;
             }
         }
 
