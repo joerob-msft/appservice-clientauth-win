@@ -7,6 +7,25 @@
     <h1 class="display-4">Azure App Service Certificate Manager</h1>
     <p class="lead">This page displays certificates loaded via WEBSITE_LOAD_CERTIFICATES and allows testing client certificate authentication.</p>
     
+    <!-- Debug Section (temporary) -->
+    @if (ViewContext.HttpContext.RequestServices.GetService<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>()?.IsDevelopment() == true)
+    {
+        <div class="row mb-3">
+            <div class="col-md-12">
+                <div class="alert alert-secondary">
+                    <h6>🐛 Debug Info</h6>
+                    <small>
+                        TestResult: @(string.IsNullOrEmpty(Model.TestResult) ? "null/empty" : $"Length: {Model.TestResult.Length}")<br>
+                        TestError: @(string.IsNullOrEmpty(Model.TestError) ? "null/empty" : $"Length: {Model.TestError.Length}")<br>
+                        TestSuccessful: @Model.TestSuccessful<br>
+                        TestUrl: @(string.IsNullOrEmpty(Model.TestUrl) ? "null/empty" : Model.TestUrl)<br>
+                        LoadedCertificates: @Model.LoadedCertificates.Count
+                    </small>
+                </div>
+            </div>
+        </div>
+    }
+    
     <!-- Test URL Configuration Display -->
     <div class="row mb-3">
         <div class="col-md-12">
@@ -38,8 +57,8 @@
     {
         <div class="row mb-4">
             <div class="col-md-12">
-                <div class="card">
-                    <div class="card-header">
+                <div class="card border-primary">
+                    <div class="card-header bg-primary text-white">
                         <h3>🧪 Client Certificate Test Results</h3>
                     </div>
                     <div class="card-body">
@@ -65,6 +84,18 @@
                             </div>
                         }
                     </div>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <!-- Show this when no test results are present -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="alert alert-light">
+                    <h6>ℹ️ No Test Results</h6>
+                    <p>Click a test button below to see certificate test results here.</p>
                 </div>
             </div>
         </div>

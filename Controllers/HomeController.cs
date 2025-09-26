@@ -37,31 +37,81 @@ namespace ClientCertApp.Controllers
         [HttpPost]
         public async Task<IActionResult> TestClientCertificate(string thumbprint)
         {
+            _logger.LogInformation($"🔍 TestClientCertificate POST called with thumbprint: '{thumbprint}'");
+            
             var model = new CertificateInfoViewModel();
             
             // Set the test URL from configuration
             model.TestUrl = _configuration["ClientCertificateTestUrl"];
+            _logger.LogInformation($"🔧 Test URL configured: '{model.TestUrl ?? "null"}'");
             
             // Process client certificate from request
             ProcessClientCertificate(model);
             
             // Get all loaded certificates from certificate stores
             LoadCertificatesFromStores(model);
+            
+            _logger.LogInformation($"📊 Loaded {model.LoadedCertificates.Count} certificates total");
 
             // Find the certificate to test
             var certToTest = model.LoadedCertificates.FirstOrDefault(c => c.Thumbprint == thumbprint);
             
             if (certToTest == null)
             {
-                model.TestError = "Certificate not found";
+                _logger.LogWarning($"❌ Certificate not found with thumbprint: '{thumbprint}'");
+                _logger.LogInformation($"📋 Available thumbprints:");
+                foreach (var cert in model.LoadedCertificates.Take(10)) // Show first 10
+                {
+                    _logger.LogInformation($"   - '{cert.Thumbprint}' ({cert.Subject.Substring(0, Math.Min(50, cert.Subject.Length))})");
+                }
+                if (model.LoadedCertificates.Count > 10)
+                {
+                    _logger.LogInformation($"   ... and {model.LoadedCertificates.Count - 10} more certificates");
+                }
+                
+                model.TestError = $"Certificate not found with thumbprint: {thumbprint}";
                 model.TestSuccessful = false;
+                _logger.LogInformation($"🔍 Set TestError: '{model.TestError}'");
             }
             else
             {
+                _logger.LogInformation($"✅ Found certificate to test: '{certToTest.Subject}'");
+                _logger.LogInformation($"   Thumbprint: '{certToTest.Thumbprint}'");
+                _logger.LogInformation($"   HasPrivateKey: {certToTest.HasPrivateKey}");
+                _logger.LogInformation($"   StoreLocation: {certToTest.StoreLocation}");
+                _logger.LogInformation($"   StoreName: {certToTest.StoreName}");
+                
                 // Test the certificate
-                await TestCertificateClientAuthAsync(certToTest, model);
+                try
+                {
+                    _logger.LogInformation($"🚀 About to call TestCertificateClientAuthAsync...");
+                    await TestCertificateClientAuthAsync(certToTest, model);
+                    _logger.LogInformation($"✅ TestCertificateClientAuthAsync completed");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"❌ Exception in TestCertificateClientAuthAsync");
+                    model.TestError = $"Exception during certificate test: {ex.Message}";
+                    model.TestSuccessful = false;
+                }
             }
 
+            // 🚨 CRITICAL DEBUG: Log the final model state
+            _logger.LogInformation($"🔍 FINAL MODEL STATE:");
+            _logger.LogInformation($"   TestResult: {(string.IsNullOrEmpty(model.TestResult) ? "NULL/EMPTY" : $"SET ({model.TestResult.Length} chars)")}");
+            _logger.LogInformation($"   TestError: {(string.IsNullOrEmpty(model.TestError) ? "NULL/EMPTY" : $"SET ({model.TestError.Length} chars)")}");
+            _logger.LogInformation($"   TestSuccessful: {model.TestSuccessful}");
+            _logger.LogInformation($"   TestUrl: '{model.TestUrl ?? "NULL"}'");
+            
+            // Also set a simple test message to ensure the view condition works
+            if (string.IsNullOrEmpty(model.TestResult) && string.IsNullOrEmpty(model.TestError))
+            {
+                _logger.LogWarning($"⚠️ Both TestResult and TestError are empty! Setting fallback message.");
+                model.TestError = "DEBUG: Test completed but no result was set. Check logs for details.";
+                _logger.LogInformation($"🔍 Set fallback TestError: '{model.TestError}'");
+            }
+
+            _logger.LogInformation($"🏁 Returning view with model");
             return View("Index", model);
         }
 
@@ -166,7 +216,7 @@ namespace ClientCertApp.Controllers
 
         private void LoadCertificatesFromStores(CertificateInfoViewModel model)
         {
-            _logger.LogInformation("Loading certificates from certificate stores...");
+            _logger.LogInformation("📚 Loading certificates from certificate stores...");
             
             // Check multiple certificate stores where WEBSITE_LOAD_CERTIFICATES might load certificates
             var storesToCheck = new[]
@@ -186,11 +236,11 @@ namespace ClientCertApp.Controllers
                     using var store = new X509Store(storeInfo.Name, storeInfo.Location);
                     store.Open(OpenFlags.ReadOnly);
                     
-                    _logger.LogInformation($"Checking store: {storeInfo.Name} ({storeInfo.Location}) - Found {store.Certificates.Count} certificates");
+                    _logger.LogInformation($"📂 Checking store: {storeInfo.Name} ({storeInfo.Location}) - Found {store.Certificates.Count} certificates");
 
                     foreach (X509Certificate2 cert in store.Certificates)
                     {
-                        _logger.LogDebug($"Processing certificate: {cert.Subject}, HasPrivateKey: {cert.HasPrivateKey}");
+                        _logger.LogDebug($"📜 Processing certificate: {cert.Subject}, HasPrivateKey: {cert.HasPrivateKey}, Thumbprint: {cert.Thumbprint}");
                         
                         var certInfo = new LoadedCertificateInfo
                         {
@@ -262,7 +312,7 @@ namespace ClientCertApp.Controllers
                 catch (Exception ex)
                 {
                     // Store might not be accessible, skip it
-                    _logger.LogWarning(ex, $"Could not access certificate store: {storeInfo.Name} ({storeInfo.Location})");
+                    _logger.LogWarning(ex, $"⚠️ Could not access certificate store: {storeInfo.Name} ({storeInfo.Location})");
                     continue;
                 }
             }
@@ -276,41 +326,53 @@ namespace ClientCertApp.Controllers
             
             model.LoadedCertificates = uniqueCerts;
             
-            _logger.LogInformation($"Loaded {model.LoadedCertificates.Count} unique certificates, {model.LoadedCertificates.Count(c => c.HasPrivateKey)} have private keys");
+            _logger.LogInformation($"✅ Loaded {model.LoadedCertificates.Count} unique certificates, {model.LoadedCertificates.Count(c => c.HasPrivateKey)} have private keys");
         }
 
         private async Task TestCertificateClientAuthAsync(LoadedCertificateInfo certInfo, CertificateInfoViewModel model)
         {
+            _logger.LogInformation($"🧪 Starting certificate test for: '{certInfo.Subject}'");
+            
             var testUrl = model.TestUrl;
             
             if (string.IsNullOrEmpty(testUrl))
             {
+                _logger.LogWarning("❌ Test URL is not configured");
                 model.TestError = "ClientCertificateTestUrl is not configured in application settings.";
                 model.TestSuccessful = false;
+                _logger.LogInformation($"🔍 Set TestError due to missing URL: '{model.TestError}'");
                 return;
             }
 
             try
             {
+                _logger.LogInformation($"🔑 Loading certificate from store...");
                 // Load the actual certificate from the store for the HTTP call
                 var certificate = GetCertificateFromStore(certInfo.Thumbprint, certInfo.StoreLocation, certInfo.StoreName);
                 
                 if (certificate == null)
                 {
+                    _logger.LogError($"❌ Could not load certificate from store: '{certInfo.Subject}'");
                     model.TestError = $"Could not load certificate from store: {certInfo.Subject}";
                     model.TestSuccessful = false;
+                    _logger.LogInformation($"🔍 Set TestError due to cert load failure: '{model.TestError}'");
                     return;
                 }
+
+                _logger.LogInformation($"✅ Successfully loaded certificate from store");
 
                 // Check if certificate has private key (required for client authentication)
                 if (!certificate.HasPrivateKey)
                 {
+                    _logger.LogWarning($"⚠️ Certificate has no private key: '{certInfo.Subject}'");
                     model.TestError = $"Certificate '{certInfo.Subject}' does not have a private key accessible. Cannot use for client authentication.";
                     model.TestSuccessful = false;
+                    _logger.LogInformation($"🔍 Set TestError due to no private key: '{model.TestError}'");
                     return;
                 }
 
                 var startTime = DateTime.UtcNow;
+                _logger.LogInformation($"🌐 Making HTTP request to: {testUrl}");
 
                 // Create HTTP client handler with the certificate
                 using var handler = new HttpClientHandler();
@@ -319,9 +381,7 @@ namespace ClientCertApp.Controllers
                 // Configure SSL/TLS options
                 handler.ServerCertificateCustomValidationCallback = (message, cert, chain, sslPolicyErrors) =>
                 {
-                    // For testing purposes, you might want to accept all certificates
-                    // In production, implement proper certificate validation
-                    _logger.LogInformation($"Server certificate validation: {sslPolicyErrors}");
+                    _logger.LogInformation($"🔒 Server certificate validation: {sslPolicyErrors}");
                     return true; // Accept all certificates for testing
                 };
 
@@ -332,13 +392,13 @@ namespace ClientCertApp.Controllers
                 httpClient.DefaultRequestHeaders.Add("User-Agent", "Azure-AppService-ClientCert-Tester/1.0");
                 httpClient.DefaultRequestHeaders.Add("X-Test-Certificate-Thumbprint", certInfo.Thumbprint);
 
-                _logger.LogInformation($"Making HTTP request to {testUrl} with certificate: {certInfo.Subject}");
-
                 // Make the HTTP request
                 var response = await httpClient.GetAsync(testUrl);
                 var responseContent = await response.Content.ReadAsStringAsync();
                 var endTime = DateTime.UtcNow;
                 var duration = endTime - startTime;
+
+                _logger.LogInformation($"✅ HTTP request completed. Status: {response.StatusCode}, Duration: {duration.TotalMilliseconds}ms");
 
                 // Build detailed result message
                 var resultBuilder = new StringBuilder();
@@ -394,15 +454,21 @@ namespace ClientCertApp.Controllers
                 model.TestResult = resultBuilder.ToString();
                 model.TestSuccessful = response.IsSuccessStatusCode;
                 
+                _logger.LogInformation($"🔍 Set TestResult with {model.TestResult.Length} characters");
+                _logger.LogInformation($"🔍 TestResult preview: {model.TestResult.Substring(0, Math.Min(200, model.TestResult.Length))}...");
+                
                 if (!response.IsSuccessStatusCode)
                 {
                     model.TestError = $"HTTP request returned error status: {(int)response.StatusCode} {response.ReasonPhrase}";
+                    _logger.LogInformation($"🔍 Also set TestError: '{model.TestError}'");
                 }
                 
-                _logger.LogInformation($"Certificate test completed. Success: {model.TestSuccessful}, Status: {response.StatusCode}");
+                _logger.LogInformation($"✅ Certificate test completed. Success: {model.TestSuccessful}");
             }
             catch (HttpRequestException httpEx)
             {
+                _logger.LogError(httpEx, "❌ HTTP request failed");
+                
                 var errorBuilder = new StringBuilder();
                 errorBuilder.AppendLine($"❌ HTTP Request Failed");
                 errorBuilder.AppendLine($"URL: {testUrl}");
@@ -423,15 +489,15 @@ namespace ClientCertApp.Controllers
 
                 model.TestError = errorBuilder.ToString();
                 model.TestSuccessful = false;
-                
-                _logger.LogError(httpEx, $"HTTP request failed for certificate {certInfo.Thumbprint}");
+                _logger.LogInformation($"🔍 Set TestError due to HTTP exception: '{model.TestError}'");
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "❌ Unexpected error during certificate test");
+                
                 model.TestError = $"❌ Unexpected error testing certificate '{certInfo.Subject}': {ex.Message}";
                 model.TestSuccessful = false;
-                
-                _logger.LogError(ex, $"Unexpected error testing certificate {certInfo.Thumbprint}");
+                _logger.LogInformation($"🔍 Set TestError due to unexpected exception: '{model.TestError}'");
             }
         }
 
@@ -439,6 +505,8 @@ namespace ClientCertApp.Controllers
         {
             try
             {
+                _logger.LogInformation($"🔍 Looking for certificate with thumbprint '{thumbprint}' in {storeName} ({storeLocation})");
+                
                 var location = Enum.Parse<StoreLocation>(storeLocation);
                 var name = Enum.Parse<StoreName>(storeName);
                 
@@ -446,11 +514,23 @@ namespace ClientCertApp.Controllers
                 store.Open(OpenFlags.ReadOnly);
                 
                 var certs = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, false);
-                return certs.Count > 0 ? certs[0] : null;
+                
+                _logger.LogInformation($"🔍 Found {certs.Count} certificates matching thumbprint");
+                
+                if (certs.Count > 0)
+                {
+                    _logger.LogInformation($"✅ Successfully found certificate: {certs[0].Subject}");
+                    return certs[0];
+                }
+                else
+                {
+                    _logger.LogWarning($"❌ No certificate found with thumbprint '{thumbprint}' in {storeName} ({storeLocation})");
+                    return null;
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error loading certificate {thumbprint} from {storeLocation}/{storeName}");
+                _logger.LogError(ex, $"❌ Error loading certificate {thumbprint} from {storeLocation}/{storeName}");
                 return null;
             }
         }
