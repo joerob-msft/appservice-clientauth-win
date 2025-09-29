@@ -233,7 +233,7 @@
                         @foreach (var cert in Model.LoadedCertificates)
                         {
                             <div class="modal fade" id="certModal-@cert.Thumbprint" tabindex="-1">
-                                <div class="modal-dialog modal-lg">
+                                <div class="modal-dialog modal-xl">
                                     <div class="modal-content">
                                         <div class="modal-header">
                                             <h5 class="modal-title">Certificate Details</h5>
@@ -277,11 +277,72 @@
                                             @if (cert.KeyUsages.Any())
                                             {
                                                 <h6>Key Usages</h6>
-                                                <div class="d-flex flex-wrap gap-1">
+                                                <div class="d-flex flex-wrap gap-1 mb-3">
                                                     @foreach (var usage in cert.KeyUsages)
                                                     {
                                                         <span class="badge bg-info">@usage</span>
                                                     }
+                                                </div>
+                                            }
+
+                                            <!-- Certificate Chain Section -->
+                                            @if (cert.ChainElements.Any())
+                                            {
+                                                <h6>🔗 Certificate Chain (@cert.ChainLength elements)</h6>
+                                                <div class="mb-3">
+                                                    <div class="d-flex align-items-center mb-2">
+                                                        <span class="badge bg-@(cert.ChainIsValid ? "success" : "warning") me-2">
+                                                            @(cert.ChainIsValid ? "✅ Valid Chain" : "⚠️ Chain Issues")
+                                                        </span>
+                                                        @if (cert.ChainErrors.Any())
+                                                        {
+                                                            <small class="text-muted">(@cert.ChainErrors.Count issues found)</small>
+                                                        }
+                                                    </div>
+                                                    
+                                                    @for (int i = 0; i < cert.ChainElements.Count; i++)
+                                                    {
+                                                        var element = cert.ChainElements[i];
+                                                        <div class="d-flex align-items-center mb-2">
+                                                            <span class="badge bg-@(element.IsRoot ? "primary" : i == 0 ? "success" : "secondary") me-2">
+                                                                @(element.IsRoot ? "Root CA" : i == 0 ? "End Entity" : "Intermediate CA")
+                                                            </span>
+                                                            <div class="flex-grow-1">
+                                                                <div class="small"><strong>@element.Subject</strong></div>
+                                                                <div class="text-muted small">
+                                                                    <strong>Issuer:</strong> @element.Issuer<br>
+                                                                    <strong>Valid:</strong> @element.NotBefore.ToString("yyyy-MM-dd") to @element.NotAfter.ToString("yyyy-MM-dd")<br>
+                                                                    <strong>Thumbprint:</strong> <code class="small">@element.Thumbprint</code>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        @if (i < cert.ChainElements.Count - 1)
+                                                        {
+                                                            <div class="text-center text-muted mb-2">
+                                                                <i class="bi bi-arrow-down"></i> issued by
+                                                            </div>
+                                                        }
+                                                    }
+                                                </div>
+                                                
+                                                @if (cert.ChainErrors.Any())
+                                                {
+                                                    <h6>⚠️ Chain Validation Issues</h6>
+                                                    <div class="mb-3">
+                                                        @foreach (var error in cert.ChainErrors)
+                                                        {
+                                                            <div class="alert alert-warning py-2 small" role="alert">
+                                                                @error
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <h6>🔗 Certificate Chain</h6>
+                                                <div class="alert alert-info">
+                                                    <small>No chain information available. This may indicate an issue building the certificate chain.</small>
                                                 </div>
                                             }
                                         </div>
