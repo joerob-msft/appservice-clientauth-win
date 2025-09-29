@@ -1,18 +1,22 @@
 using Microsoft.AspNetCore.Authentication.Certificate;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
-using System.Security.Cryptography.X509Certificates;
+using ClientCertApp.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// Add services to the container
 builder.Services.AddControllersWithViews();
+
+// Register our services
+builder.Services.AddScoped<ICertificateService, CertificateService>();
+builder.Services.AddScoped<ICertificateValidationService, CertificateValidationService>();
 
 // Configure certificate authentication
 builder.Services.AddAuthentication(CertificateAuthenticationDefaults.AuthenticationScheme)
     .AddCertificate(options =>
     {
         options.AllowedCertificateTypes = CertificateTypes.All;
-        options.RevocationMode = X509RevocationMode.NoCheck;
+        options.RevocationMode = System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;
         options.ValidateCertificateUse = false;
         options.ValidateValidityPeriod = false;
     });
@@ -28,7 +32,7 @@ builder.Services.Configure<KestrelServerOptions>(options =>
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Configure the HTTP request pipeline
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Home/Error");

@@ -1,0 +1,74 @@
+html {
+  font-size: 14px;
+}
+
+@media (min-width: 768px) {
+  html {
+    font-size: 16px;
+  }
+}
+
+.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
+  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
+}
+
+html {
+  position: relative;
+  min-height: 100%;
+}
+
+body {
+  margin-bottom: 60px;
+}
+
+.footer {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  white-space: nowrap;
+  line-height: 60px;
+}
+
+/* Custom styles for certificate validation */
+.gap-2 > * {
+    margin-right: 0.5rem !important;
+    margin-bottom: 0.5rem !important;
+}
+
+.validation-issues .alert {
+    margin-bottom: 0.5rem;
+}
+
+.validation-issues .alert:last-child {
+    margin-bottom: 0;
+}
+
+/* Fix for Bootstrap 5 badge classes */
+.badge.fs-6 {
+    font-size: 0.875rem !important;
+}
+
+/* Certificate status cards hover effect */
+.text-center.p-3.border.rounded {
+    transition: all 0.2s ease;
+}
+
+.text-center.p-3.border.rounded:hover {
+    background-color: #f8f9fa;
+}
+
+/* filepath: d:\github\appservice-clientauth-win\wwwroot\js\site.js */
+// Initialize Bootstrap components when DOM is ready
+document.addEventListener('DOMContentLoaded', function () {
+    // Initialize tooltips if any
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+
+    // Initialize popovers if any
+    var popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
+    var popoverList = popoverTriggerList.map(function (popoverTriggerEl) {
+        return new bootstrap.Popover(popoverTriggerEl);
+    });
+});

@@ -8,6 +8,9 @@ namespace ClientCertApp.Models
         public bool HasClientCertificate { get; set; }
         public ClientCertificateInfo? ClientCertificate { get; set; }
         
+        // Certificate validation results
+        public CertificateValidationResult ValidationResult { get; set; } = new();
+        
         // All loaded certificates from certificate store
         public List<LoadedCertificateInfo> LoadedCertificates { get; set; } = new List<LoadedCertificateInfo>();
         
