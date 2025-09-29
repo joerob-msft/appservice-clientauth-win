@@ -93,40 +93,38 @@ namespace ClientCertApp.Services
         {
             try
             {
-                using var chain = new X509Chain();
+                // Build all possible certificate chains (cross-signed paths)
+                var allChains = BuildAllCertificateChains(certificate);
                 
-                // Configure chain building policy
-                chain.ChainPolicy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.2")); // Client Authentication
-                chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
-                chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
-                chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
-
-                // Build the chain
-                certInfo.ChainIsValid = chain.Build(certificate);
-                
-                // Extract chain elements
-                foreach (X509ChainElement chainElement in chain.ChainElements)
+                if (allChains.Any())
                 {
-                    var element = new CertificateChainElement
-                    {
-                        Subject = chainElement.Certificate.Subject,
-                        Issuer = chainElement.Certificate.Issuer,
-                        Thumbprint = chainElement.Certificate.Thumbprint,
-                        NotBefore = chainElement.Certificate.NotBefore,
-                        NotAfter = chainElement.Certificate.NotAfter,
-                        IsRoot = chainElement.Certificate.Subject == chainElement.Certificate.Issuer
-                    };
+                    // Use the best chain (longest valid chain, or first if all invalid)
+                    var bestChain = SelectBestChain(allChains);
                     
-                    certInfo.ChainElements.Add(element);
-                }
-
-                // Extract chain errors if any
-                if (chain.ChainStatus.Length > 0)
-                {
-                    foreach (var status in chain.ChainStatus)
+                    certInfo.ChainIsValid = bestChain.IsValid;
+                    certInfo.ChainElements.AddRange(bestChain.Elements);
+                    certInfo.ChainErrors.AddRange(bestChain.Errors);
+                    
+                    // If multiple chains exist, add information about cross-signing
+                    if (allChains.Count > 1)
                     {
-                        certInfo.ChainErrors.Add($"{status.Status}: {status.StatusInformation}");
+                        certInfo.ChainErrors.Add($"Certificate has {allChains.Count} possible chain paths (cross-signed)");
+                        
+                        for (int i = 0; i < allChains.Count; i++)
+                        {
+                            var chain = allChains[i];
+                            var status = chain.IsValid ? "✅ Valid" : "❌ Invalid";
+                            var rootCert = chain.Elements.LastOrDefault();
+                            var rootName = rootCert?.Subject ?? "Unknown";
+                            
+                            certInfo.ChainErrors.Add($"Path {i + 1}: {status} - {chain.Elements.Count} certs to root: {rootName}");
+                        }
                     }
+                }
+                else
+                {
+                    certInfo.ChainIsValid = false;
+                    certInfo.ChainErrors.Add("Unable to build any certificate chain");
                 }
             }
             catch (Exception ex)
@@ -134,6 +132,254 @@ namespace ClientCertApp.Services
                 _logger.LogWarning(ex, "Failed to build certificate chain for {Thumbprint}", certificate.Thumbprint);
                 certInfo.ChainErrors.Add($"Chain building failed: {ex.Message}");
                 certInfo.ChainIsValid = false;
+            }
+        }
+
+        private List<CertificateChainInfo> BuildAllCertificateChains(X509Certificate2 certificate)
+        {
+            var allChains = new List<CertificateChainInfo>();
+            
+            // Try different chain building policies to discover cross-signed paths
+            var policies = new[]
+            {
+                // Standard policy
+                new ChainPolicy { RevocationMode = X509RevocationMode.Online, AllowUnknownCA = true },
+                // Offline policy (may find different paths)
+                new ChainPolicy { RevocationMode = X509RevocationMode.Offline, AllowUnknownCA = true },
+                // No revocation check (may find additional paths)
+                new ChainPolicy { RevocationMode = X509RevocationMode.NoCheck, AllowUnknownCA = true },
+                // Strict policy
+                new ChainPolicy { RevocationMode = X509RevocationMode.Online, AllowUnknownCA = false }
+            };
+            
+            foreach (var policy in policies)
+            {
+                try
+                {
+                    using var chain = new X509Chain();
+                    
+                    // Configure chain policy
+                    chain.ChainPolicy.RevocationMode = policy.RevocationMode;
+                    chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
+                    
+                    if (policy.AllowUnknownCA)
+                    {
+                        chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
+                    }
+                    
+                    // Add client authentication EKU
+                    chain.ChainPolicy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.2"));
+                    
+                    // Build the chain
+                    bool isValid = chain.Build(certificate);
+                    
+                    var chainInfo = new CertificateChainInfo
+                    {
+                        IsValid = isValid,
+                        PolicyDescription = GetPolicyDescription(policy)
+                    };
+                    
+                    // Extract chain elements
+                    foreach (X509ChainElement chainElement in chain.ChainElements)
+                    {
+                        var element = new CertificateChainElement
+                        {
+                            Subject = chainElement.Certificate.Subject,
+                            Issuer = chainElement.Certificate.Issuer,
+                            Thumbprint = chainElement.Certificate.Thumbprint,
+                            NotBefore = chainElement.Certificate.NotBefore,
+                            NotAfter = chainElement.Certificate.NotAfter,
+                            IsRoot = chainElement.Certificate.Subject == chainElement.Certificate.Issuer
+                        };
+                        
+                        chainInfo.Elements.Add(element);
+                    }
+                    
+                    // Extract chain errors
+                    if (chain.ChainStatus.Length > 0)
+                    {
+                        foreach (var status in chain.ChainStatus)
+                        {
+                            chainInfo.Errors.Add($"{status.Status}: {status.StatusInformation}");
+                        }
+                    }
+                    
+                    // Only add unique chains (avoid duplicates)
+                    if (!allChains.Any(c => ChainsAreEquivalent(c, chainInfo)))
+                    {
+                        allChains.Add(chainInfo);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Chain building failed for policy {Policy}", policy);
+                }
+            }
+            
+            // Try to discover additional cross-signed paths by examining intermediate certificates
+            TryDiscoverCrossSignedPaths(certificate, allChains);
+            
+            return allChains;
+        }
+
+        private void TryDiscoverCrossSignedPaths(X509Certificate2 certificate, List<CertificateChainInfo> existingChains)
+        {
+            try
+            {
+                // Look for the certificate's issuer in different certificate stores
+                var issuerName = certificate.Issuer;
+                var potentialIssuers = FindCertificatesBySubject(issuerName);
+                
+                foreach (var issuer in potentialIssuers)
+                {
+                    // Skip if this issuer is already part of existing chains
+                    if (existingChains.Any(c => c.Elements.Any(e => e.Thumbprint == issuer.Thumbprint)))
+                        continue;
+                        
+                    try
+                    {
+                        // Try building a chain starting with this specific issuer
+                        using var chain = new X509Chain();
+                        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                        chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
+                        
+                        // Add the potential issuer to the extra store
+                        chain.ChainPolicy.ExtraStore.Add(issuer);
+                        
+                        bool isValid = chain.Build(certificate);
+                        
+                        var chainInfo = new CertificateChainInfo
+                        {
+                            IsValid = isValid,
+                            PolicyDescription = $"Cross-signed path via {GetCommonName(issuer.Subject)}"
+                        };
+                        
+                        foreach (X509ChainElement chainElement in chain.ChainElements)
+                        {
+                            var element = new CertificateChainElement
+                            {
+                                Subject = chainElement.Certificate.Subject,
+                                Issuer = chainElement.Certificate.Issuer,
+                                Thumbprint = chainElement.Certificate.Thumbprint,
+                                NotBefore = chainElement.Certificate.NotBefore,
+                                NotAfter = chainElement.Certificate.NotAfter,
+                                IsRoot = chainElement.Certificate.Subject == chainElement.Certificate.Issuer
+                            };
+                            
+                            chainInfo.Elements.Add(element);
+                        }
+                        
+                        if (chain.ChainStatus.Length > 0)
+                        {
+                            foreach (var status in chain.ChainStatus)
+                            {
+                                chainInfo.Errors.Add($"{status.Status}: {status.StatusInformation}");
+                            }
+                        }
+                        
+                        // Add if it's a unique chain
+                        if (!existingChains.Any(c => ChainsAreEquivalent(c, chainInfo)))
+                        {
+                            existingChains.Add(chainInfo);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Cross-chain discovery failed for issuer {Issuer}", issuer.Subject);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Cross-signed path discovery failed");
+            }
+        }
+
+        private List<X509Certificate2> FindCertificatesBySubject(string subjectName)
+        {
+            var certificates = new List<X509Certificate2>();
+            
+            var stores = new[]
+            {
+                new { Location = StoreLocation.CurrentUser, Name = StoreName.My },
+                new { Location = StoreLocation.CurrentUser, Name = StoreName.CertificateAuthority },
+                new { Location = StoreLocation.CurrentUser, Name = StoreName.Root },
+                new { Location = StoreLocation.LocalMachine, Name = StoreName.My },
+                new { Location = StoreLocation.LocalMachine, Name = StoreName.CertificateAuthority },
+                new { Location = StoreLocation.LocalMachine, Name = StoreName.Root }
+            };
+            
+            foreach (var storeInfo in stores)
+            {
+                try
+                {
+                    using var store = new X509Store(storeInfo.Name, storeInfo.Location);
+                    store.Open(OpenFlags.ReadOnly);
+                    
+                    var matchingCerts = store.Certificates
+                        .Cast<X509Certificate2>()
+                        .Where(c => c.Subject.Equals(subjectName, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                        
+                    certificates.AddRange(matchingCerts);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error searching store {Location}\\{Name}", storeInfo.Location, storeInfo.Name);
+                }
+            }
+            
+            return certificates.DistinctBy(c => c.Thumbprint).ToList();
+        }
+
+        private CertificateChainInfo SelectBestChain(List<CertificateChainInfo> chains)
+        {
+            // Prefer valid chains over invalid ones
+            var validChains = chains.Where(c => c.IsValid).ToList();
+            if (validChains.Any())
+            {
+                // Among valid chains, prefer the longest (most complete)
+                return validChains.OrderByDescending(c => c.Elements.Count).First();
+            }
+            
+            // If no valid chains, return the longest invalid chain
+            return chains.OrderByDescending(c => c.Elements.Count).First();
+        }
+
+        private bool ChainsAreEquivalent(CertificateChainInfo chain1, CertificateChainInfo chain2)
+        {
+            if (chain1.Elements.Count != chain2.Elements.Count)
+                return false;
+                
+            for (int i = 0; i < chain1.Elements.Count; i++)
+            {
+                if (chain1.Elements[i].Thumbprint != chain2.Elements[i].Thumbprint)
+                    return false;
+            }
+            
+            return true;
+        }
+
+        private string GetPolicyDescription(ChainPolicy policy)
+        {
+            var parts = new List<string>();
+            
+            parts.Add($"Revocation: {policy.RevocationMode}");
+            parts.Add($"Unknown CA: {(policy.AllowUnknownCA ? "Allowed" : "Blocked")}");
+            
+            return string.Join(", ", parts);
+        }
+
+        private string GetCommonName(string distinguishedName)
+        {
+            try
+            {
+                var cnMatch = System.Text.RegularExpressions.Regex.Match(distinguishedName, @"CN=([^,]+)");
+                return cnMatch.Success ? cnMatch.Groups[1].Value : distinguishedName;
+            }
+            catch
+            {
+                return distinguishedName;
             }
         }
 
@@ -475,5 +721,21 @@ namespace ClientCertApp.Services
 
             return result.ToString();
         }
+
+        
+        private class CertificateChainInfo
+        {
+            public bool IsValid { get; set; }
+            public string PolicyDescription { get; set; } = string.Empty;
+            public List<CertificateChainElement> Elements { get; set; } = new();
+            public List<string> Errors { get; set; } = new();
+        }
+
+        private class ChainPolicy
+        {
+            public X509RevocationMode RevocationMode { get; set; }
+            public bool AllowUnknownCA { get; set; }
+        }
+
     }
 }
