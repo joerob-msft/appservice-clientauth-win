@@ -76,37 +76,6 @@ namespace ClientCertApp.Models
         public string Thumbprint { get; set; } = string.Empty;
         public DateTime NotBefore { get; set; }
         public DateTime NotAfter { get; set; }
-    }
-}
-
-/* filepath: d:\github\appservice-clientauth-win\wwwroot\js\site.js */
-// Initialize Bootstrap components when DOM is ready
-document.addEventListener('DOMContentLoaded', function () {
-    console.log('Site.js loaded successfully');
-    
-    // Initialize tooltips if any
-    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-        return new bootstrap.Tooltip(tooltipTriggerEl);
-    });
-
-    // Initialize popovers if any
-    var popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
-    var popoverList = popoverTriggerList.map(function (popoverTriggerEl) {
-        return new bootstrap.Popover(popoverTriggerEl);
-    });
-});
-
-// Certificate details modal function
-function showCertDetails(thumbprint) {
-    var modalId = '#certModal-' + thumbprint;
-    var modalElement = document.querySelector(modalId);
-    
-    if (modalElement) {
-        var modal = new bootstrap.Modal(modalElement);
-        modal.show();
-    } else {
-        console.error('Modal not found:', modalId);
-        alert('Certificate details modal not found. Please refresh the page and try again.');
+        public bool IsRoot { get; set; }
     }
 }
